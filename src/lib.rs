@@ -2,8 +2,10 @@
 use std::fmt;
 
 use btleplug::api::{Peripheral, Characteristic};
-use uuid::Uuid;
 use characteristics as ch;
+
+fn temperature_c_to_f(c: f32) -> f32 { c * 1.8 + 32.0 }
+fn pressure_hpa_to_atm(hpa: f32) -> f32 { hpa/1013.25 }
 
 pub mod uuids {
     use uuid::{uuid, Uuid};
@@ -13,6 +15,8 @@ pub mod uuids {
     // https://github.com/Anrijs/Aranet4-Python/blob/b712654891c6f434c04774cb62f8aea0d97016a5/aranet4/client.py#L261
 
     /// Manufacturer id for LE advertisement.
+    /// BTLE Assigned Numbers document: https://btprodspecificationrefs.blob.core.windows.net/assigned-numbers/Assigned%20Number%20Types/Assigned_Numbers.pdf
+    /// 0x0702 is assigned to 'Akciju sabiedriba "SAF TEHNIKA"', where SAF Tehnika is the parent company behind the 'Aranet' brand.
     pub const MANUFACTURER_ID: u16 = 0x0702;
 
     // Services
@@ -242,8 +246,31 @@ impl CurrentReadingDetailed {
     }
     
     pub fn temperature_f(&self) -> Option<f32> {
-        self.temperature_c
-            .map(|c| c * 1.8 + 32.0)
+        self.temperature_c.map(temperature_c_to_f)
+    }
+
+    pub fn pressure_atm(&self) -> Option<f32> {
+        self.pressure_hpa.map(pressure_hpa_to_atm)
+    }
+}
+
+impl fmt::Display for CurrentReadingDetailed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Measurement Age: {}/{}s", self.age, self.interval)?;
+        writeln!(f, "Battery: {:.0}%", self.battery * 100.0)?;
+        if let Some(ppm) = self.co2_ppm {
+            writeln!(f, "CO2: {} PPM", ppm)?;
+        }
+        writeln!(f, "CO2 Status: {:?}", self.status)?;
+        if let Some(c) = self.temperature_c {
+            writeln!(f, "Temperature: {:.1}°F ({:.1}°C)", temperature_c_to_f(c), c)?;
+        }
+        writeln!(f, "Rel. Humidity: {:.0}%", self.humidity * 100.0)?;
+        if let Some(hpa) = self.pressure_hpa {
+            writeln!(f, "Pressure: {:.3} atm ({:.0} hPa)", pressure_hpa_to_atm(hpa), hpa)?;
+        }
+        
+        Ok(())
     }
 }
 
