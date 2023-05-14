@@ -1,11 +1,16 @@
 
 use std::fmt;
 
-use btleplug::api::{Peripheral, Characteristic};
+use std::pin::Pin;
+use btleplug::api::CentralEvent;
+use btleplug::api::{Central, Manager as _, ScanFilter, Peripheral, Characteristic};
+use btleplug::platform::{Adapter, Manager, PeripheralId};
+use futures::{future, Stream, StreamExt};
+
 use characteristics as ch;
 
-fn temperature_c_to_f(c: f32) -> f32 { c * 1.8 + 32.0 }
-fn pressure_hpa_to_atm(hpa: f32) -> f32 { hpa/1013.25 }
+pub fn temperature_c_to_f(c: f32) -> f32 { c * 1.8 + 32.0 }
+pub fn pressure_hpa_to_atm(hpa: f32) -> f32 { hpa/1013.25 }
 
 pub mod uuids {
     use uuid::{uuid, Uuid};
@@ -367,4 +372,60 @@ impl<P: Peripheral> Aranet4<P> {
 
         Ok(u16::from_le_bytes(raw.try_into().expect("expected total readings to be a 2-byte little endian integer")))
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct DiscoveredAranet {
+    pub adapter: Adapter,
+    pub peripheral_id: PeripheralId,
+    pub manufacturer_data: ManufacturerData,
+    pub current_reading: Option<CurrentReadingDetailed>,
+}
+
+/// Attempt to locate an Aranet4 device, by finding a device that advertises manufacturer data with the correct ID
+pub async fn discover_aranet4(manager: &Manager) -> btleplug::Result<Pin<Box<impl Stream<Item = DiscoveredAranet>>>> {
+    let adapters = manager.adapters().await?;
+    log::debug!("Found {} BTLE adapters", adapters.len());
+    let mut event_streams = Vec::with_capacity(adapters.len());
+
+    for (adapter_idx, adapter) in adapters.into_iter().enumerate() {
+        log::debug!("BTLE Adapter#{} - Found {:?}", adapter_idx, adapter);
+        adapter.start_scan(ScanFilter { services: vec![uuids::AR4_SERVICE] }).await?;
+        log::debug!("BTLE Adapter#{} - Started scanning", adapter_idx);
+        let events = adapter.events().await?;
+        log::debug!("BTLE Adapter#{} - Listening", adapter_idx);
+        let inspected = events.inspect(move |ce| {
+            log::trace!("BTLE Adapter#{} - Event {:?}", adapter_idx, ce);
+        });
+        event_streams.push(inspected.filter_map(move |ce| {
+            future::ready(match ce {
+                CentralEvent::ManufacturerDataAdvertisement { id, manufacturer_data } => {
+                    if let Some(data) = manufacturer_data.get(&uuids::MANUFACTURER_ID) {
+                        let raw_manuf = data[..7].try_into()
+                            .expect("Aranet4's Manufacturer ID used for advertisement data under 7 bytes!");
+                        let manufacturer_data = ManufacturerData::parse(raw_manuf);
+                        let current_reading = data[8..21].try_into()
+                            .map(CurrentReadingDetailed::parse)
+                            .ok();
+                        Some(DiscoveredAranet {
+                            adapter: adapter.clone(),
+                            peripheral_id: id,
+                            manufacturer_data,
+                            current_reading,
+                        })
+                    } else {
+                        /* unknown manufacturer ID */
+                        None
+                    }
+                },
+                _ => {
+                    /* other discovery methods may be implemented in the future, for now - just manufacturer data */
+                    None
+                }
+            })
+        }));
+    }
+
+    log::debug!("listening on {} BTLE adapters", event_streams.len());
+    Ok(Box::pin(futures::stream::select_all(event_streams)))
 }
