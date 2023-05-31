@@ -15,7 +15,6 @@ pub fn pressure_hpa_to_atm(hpa: f32) -> f32 { hpa/1013.25 }
 pub mod uuids {
     use uuid::{uuid, Uuid};
 
-
     // Aranet UUIDs and handles
     // https://github.com/Anrijs/Aranet4-Python/blob/b712654891c6f434c04774cb62f8aea0d97016a5/aranet4/client.py#L261
 
@@ -125,6 +124,7 @@ pub mod characteristics {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Version {
     major: u8,
     minor: u8,
@@ -147,6 +147,7 @@ impl fmt::Debug for Version {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
 pub enum CalibrationState {
     NotActive = 0,
@@ -167,6 +168,7 @@ impl CalibrationState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
 pub enum DisplayStatus {
     Green = 1,
@@ -221,6 +223,7 @@ impl CurrentReading {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CurrentReadingDetailed {
     /// in ppm
     pub co2_ppm: Option<u16>,
@@ -284,12 +287,13 @@ impl CurrentReading {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ManufacturerData {
-    disconnected: bool,
-    calibration_state: CalibrationState,
-    dfu_active: bool,
-    integrations: bool,
-    version: Version,
+    pub disconnected: bool,
+    pub calibration_state: CalibrationState,
+    pub dfu_active: bool,
+    pub integrations: bool,
+    pub version: Version,
 }
 impl ManufacturerData {
     pub fn parse(data: [u8; 7]) -> ManufacturerData {
@@ -375,7 +379,9 @@ impl<P: Peripheral> Aranet4<P> {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DiscoveredAranet {
+    #[cfg_attr(feature = "serde", serde(skip_serializing))]
     pub adapter: Adapter,
     pub peripheral_id: PeripheralId,
     pub manufacturer_data: ManufacturerData,
