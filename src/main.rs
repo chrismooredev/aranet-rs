@@ -53,12 +53,97 @@ struct Args {
     device: Option<BDAddr>,
 }
 
+impl Args {
+    /// Updates arguments from CGI environment variables, if they exist.
+    #[cfg(feature = "cgi_detection")]
+    fn update_from_cgi(&mut self) {
+        use std::collections::HashMap;
+
+        if std::env::var("GATEWAY_INTERFACE").is_err() {
+            log::debug!("no cgi environment detected");
+            return;
+        }
+
+        if let Ok(querystr) = std::env::var("QUERY_STRING") {
+            let kvs: HashMap<_, _> = querystr.split('&')
+                .filter_map(|chunk| chunk.split_once('='))
+                .collect();
+            
+            let find_key = |s: &str| kvs.iter().filter_map(|(k,v)| k.eq_ignore_ascii_case(s).then_some(v)).next();
+
+            if let Some(fmt) = find_key("format") {
+                if fmt.eq_ignore_ascii_case("text") {
+                    self.format = OutputFormat::Text;
+                } else if fmt.eq_ignore_ascii_case("nagios") {
+                    #[cfg(feature = "nagiosplugin")] {
+                        self.format = OutputFormat::Nagios;
+                    }
+                    #[cfg(not(feature = "nagiosplugin"))] {
+                        println!("Content-Type: text/plain");
+                        println!();
+                        println!("Nagios not supported in this build");
+                        std::process::exit(0);
+                    }
+                } else if fmt.eq_ignore_ascii_case("json") {
+                    #[cfg(feature = "serde_json")] {
+                        self.format = OutputFormat::Json;
+                    }
+                    #[cfg(not(feature = "serde_json"))] {
+                        println!("Content-Type: application/json");
+                        println!();
+                        println!("{{ \"status\": \"error\", \"message\": \"JSON not supported in this build\" }}");
+                        std::process::exit(0);
+                    }
+                }
+            }
+
+            // if let Some(active) = find_key("active") {
+            //     if ! active.is_empty() {
+            //         self.active = true;
+            //     }
+            // }
+        }
+
+        if let Ok(accept) = std::env::var("HTTP_ACCEPT") {
+            if let Some(mime) = accept.split(",").next() {
+                if mime.eq_ignore_ascii_case("text/plain") {
+                    self.format = OutputFormat::Text;
+                } else if mime.eq_ignore_ascii_case("application/json") {
+                    #[cfg(feature = "serde_json")] {
+                        self.format = OutputFormat::Json;
+                    }
+                    #[cfg(not(feature = "serde_json"))] {
+                        println!("Content-Type: application/json");
+                        println!();
+                        println!("{{ \"status\": \"error\", \"message\": \"JSON not supported in this build\" }}");
+                        std::process::exit(0);
+                    }
+                }
+            }
+        }
+
+        println!("Content-Type: {}; charset=utf-8", match self.format {
+            OutputFormat::Text => "text/plain",
+            #[cfg(feature = "nagiosplugin")]
+            OutputFormat::Nagios => "text/plain",
+            #[cfg(feature = "serde_json")]
+            OutputFormat::Json => "application/json",
+        });
+        println!();
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     pretty_env_logger::init();
-    let args = Args::parse();
+    let mut args = Args::parse();
 
-    log::debug!("arguments: {:?}", args);
+    log::debug!("cli arguments: {:?}", args);
+
+    #[cfg(feature = "cgi_detection")] {
+        args.update_from_cgi();
+        log::debug!("cgi arguments: {:?}", args)
+    }
 
     if args.active {
         todo!("active sample request not yet implemented");
