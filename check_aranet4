@@ -1,0 +1,16 @@
+#!/bin/bash
+
+WEBSERVER=localhost
+
+exec 3>&1 # capture stdout
+
+# save stderr in variable, letting stdout through
+stderr=$(curl --silent --show-error "http://$WEBSERVER:8000/cgi-bin/aranet?format=nagios" 2>&1 1>&3)
+status=$?
+
+exec 3>&- # close temp fd
+
+if [ $status -ne 0 ] ; then
+        echo "ERROR - $stderr"
+        exit 1
+fi

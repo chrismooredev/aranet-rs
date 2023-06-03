@@ -7,8 +7,6 @@ use btleplug::api::{Central, Manager as _, ScanFilter, Peripheral, Characteristi
 use btleplug::platform::{Adapter, Manager, PeripheralId};
 use futures::{future, Stream, StreamExt};
 
-use characteristics as ch;
-
 pub fn temperature_c_to_f(c: f32) -> f32 { c * 1.8 + 32.0 }
 pub fn pressure_hpa_to_atm(hpa: f32) -> f32 { hpa/1013.25 }
 

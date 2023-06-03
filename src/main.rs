@@ -45,9 +45,9 @@ struct Args {
     #[arg(short, long)]
     repeat: bool,
     /// If --repeat is passed, the wait interval between listening for samples. If 0, then the interval from the device
-    /// is used.
-    #[arg(short, long)]
-    interval: Option<u64>,
+    /// is used. Passing -1 will disable waiting.
+    #[arg(short, long, allow_hyphen_values = true)]
+    interval: Option<f64>,
     /// Listen for a specific Aranet4 device, rather than the first available
     #[arg(short, long)]
     device: Option<BDAddr>,
@@ -239,15 +239,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         let interval = match (args.interval, first.current_reading) {
             (Some(i), _) => i,
-            (_, Some(r)) => r.interval as u64,
+            (_, Some(r)) => r.interval as f64,
             (_, _) => {
                 log::trace!("requested device interval but device did not provide a reading! using 60s default");
-                60
+                60.0
             },
         };
 
-        log::debug!("sleeping {}s before attempt receipt of next event...", interval);
-        tokio::time::sleep(Duration::from_secs(interval)).await;
+        if interval != -1.0 {
+            log::debug!("sleeping {}s before attempt receipt of next event...", interval);
+            tokio::time::sleep(Duration::from_secs_f64(interval)).await;
+        }
     }
 
     Ok(())
