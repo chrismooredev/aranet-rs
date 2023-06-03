@@ -310,45 +310,121 @@ pub struct Aranet4<P: Peripheral> {
     device: P,
 }
 
-impl<P: Peripheral> Aranet4<P> {
+#[derive(Debug, PartialEq, Eq)]
+pub enum BTLEServiceError {
+    UnexpectedSize {
+        characteristic: Characteristic,
+        characteristic_name: &'static str,
+        expected: usize,
+        received: Vec<u8>,
+    },
+}
+impl fmt::Display for BTLEServiceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnexpectedSize {
+                characteristic_name, expected, received, ..
+            } => {
+                write!(f, "recevied unexpected size from Aranet4 characteristic {}, recevied {} bytes but expected {}",
+                    characteristic_name, received.len(), expected
+                )
+            }
+        }
+        
+    }
+}
+impl std::error::Error for BTLEServiceError {
+
+}
+
+// fn _read_uuid_array<P: Peripheral, const N: usize>(device: &P, ch: Characteristic) -> [u8; N] {
+
+// }
+
+macro_rules! read_uuid {
+    ($btdev: expr, $srv_uuid: ident) => {{
+        log::trace!("reading {} on {:?}", stringify!($srv_uuid), &$btdev);
+        // let raw: Result<Vec<u8>, _> = ($btdev).read(&characteristics::$srv_uuid).await;
+        // raw
+        ($btdev).read(&characteristics::$srv_uuid)
+    }};
+    ($btdev: expr, $srv_uuid: ident, $len: literal) => {{
+        log::trace!("reading {} on {:?}", stringify!($srv_uuid), &$btdev);
+        futures::TryFutureExt::and_then(
+            ($btdev).read(&characteristics::$srv_uuid),
+            |bytes| async {
+                match <[u8; $len]>::try_from(bytes) {
+                    Ok(arr) => Ok(arr),
+                    Err(bytes) => Err(btleplug::Error::Other(Box::new(
+                        BTLEServiceError::UnexpectedSize {
+                            characteristic: characteristics::$srv_uuid,
+                            characteristic_name: stringify!($srv_uuid),
+                            expected: $len,
+                            received: bytes,
+                        }
+                    )))
+                }
+            }
+        )
+        // let raw: Result<Vec<u8>, _> = ($btdev).read(&characteristics::$srv_uuid).await;
+        // match raw {
+        //     Ok(bytes) => match <[u8; $len]>::try_from(bytes) {
+        //         Ok(arr) => Ok(arr),
+        //         Err(bytes) => Err(btleplug::Error::Other(Box::new(
+        //             BTLEServiceError::UnexpectedSize {
+        //                 characteristic: characteristics::$srv_uuid,
+        //                 characteristic_name: stringify!($srv_uuid),
+        //                 expected: $len,
+        //                 received: bytes,
+        //             }
+        //         )))
+        //     },
+        //     Err(e) => Err(e)
+        // }
+    }};
+}
+
+impl<P: Peripheral + fmt::Debug> Aranet4<P> {
     /// Creates a strongly typed Aranet4 peripheral. Will discover services if it has not already been done.
     pub async fn new(device: P) -> btleplug::Result<Self> {
         if ! device.is_connected().await? { return Err(btleplug::Error::NotConnected); }
         if device.services().is_empty() {
+            log::debug!("services in device passed to Aranet4::new({:?}) was empty, discovering", device);
             device.discover_services().await?;
         }
         let is_aranet = device.services().iter().any(|u| u.uuid == uuids::AR4_SERVICE);
         if ! is_aranet {
             return Err(btleplug::Error::NotSupported("device is not an Aranet4 device (or firmware is not v1.2.0+)".to_owned()));
-            
         }
+        log::debug!("created new Aranet4 struct, passed device {:?} had AR4_SERVICE", device);
         Ok(Aranet4 { device })
     }
 
     pub async fn current_readings(&self) -> btleplug::Result<CurrentReading> {
-        if ! self.device.is_connected().await? { return Err(btleplug::Error::NotConnected); }
-        let raw: Vec<u8> = self.device.read(&ch::AR4_READ_CURRENT_READINGS).await?;
-        Ok(CurrentReading::parse(raw.try_into().expect("expected current readings to be a 9 byte array")))
+        if ! dbg!(self.device.is_connected().await)? { return Err(btleplug::Error::NotConnected); }
+        let raw = dbg!(read_uuid!(self.device, AR4_READ_CURRENT_READINGS, 9).await)?;
+        Ok(CurrentReading::parse(raw))
     }
 
     pub async fn current_readings_details(&self) -> btleplug::Result<CurrentReadingDetailed> {
         if ! self.device.is_connected().await? { return Err(btleplug::Error::NotConnected); }
-        let raw: Vec<u8> = self.device.read(&ch::AR4_READ_CURRENT_READINGS_DET).await?;
-        Ok(CurrentReadingDetailed::parse(raw.try_into().expect("expected current readings (detailed) to be a 13 byte array")))
+        let raw = read_uuid!(self.device, AR4_READ_CURRENT_READINGS_DET, 13).await?;
+        Ok(CurrentReadingDetailed::parse(raw))
     }
 
     /// Interval between environment samples, in seconds
     pub async fn interval(&self) -> btleplug::Result<u16> {
         if ! self.device.is_connected().await? { return Err(btleplug::Error::NotConnected); }
-        let raw = self.device.read(&ch::AR4_READ_INTERVAL).await?;
+        
+        let raw = read_uuid!(self.device, AR4_READ_INTERVAL, 2).await?;
 
-        Ok(u16::from_le_bytes(raw.try_into().expect("expected interval to be a 2-byte little endian integer")))
+        Ok(u16::from_le_bytes(raw))
     }
 
     /// The name of the device.
     pub async fn name(&self) -> btleplug::Result<String> {
         if ! self.device.is_connected().await? { return Err(btleplug::Error::NotConnected); }
-        let raw = self.device.read(&ch::GENERIC_READ_DEVICE_NAME).await?;
+        let raw = read_uuid!(self.device, GENERIC_READ_DEVICE_NAME).await?;
 
         Ok(String::from_utf8(raw).map_err(|e| btleplug::Error::Other(Box::new(e)))?)
     }
@@ -356,7 +432,7 @@ impl<P: Peripheral> Aranet4<P> {
     /// The version string of the firmware
     pub async fn version(&self) -> btleplug::Result<String> {
         if ! self.device.is_connected().await? { return Err(btleplug::Error::NotConnected); }
-        let raw = self.device.read(&ch::COMMON_READ_SW_REV).await?;
+        let raw = read_uuid!(self.device, COMMON_READ_SW_REV).await?;
 
         Ok(String::from_utf8(raw).map_err(|e| btleplug::Error::Other(Box::new(e)))?)
     }
@@ -364,17 +440,21 @@ impl<P: Peripheral> Aranet4<P> {
     /// The number of seconds since the last environment sample was taken
     pub async fn last_update_age(&self) -> btleplug::Result<u16> {
         if ! self.device.is_connected().await? { return Err(btleplug::Error::NotConnected); }
-        let raw = self.device.read(&ch::AR4_READ_SECONDS_SINCE_UPDATE).await?;
+        let raw = read_uuid!(self.device, AR4_READ_SECONDS_SINCE_UPDATE, 2).await?;
 
-        Ok(u16::from_le_bytes(raw.try_into().expect("expected last update age to be a 2-byte little endian integer")))
+        Ok(u16::from_le_bytes(raw))
     }
 
     /// The number of seconds since the last environment sample was taken
     pub async fn total_readings(&self) -> btleplug::Result<u16> {
         if ! self.device.is_connected().await? { return Err(btleplug::Error::NotConnected); }
-        let raw = self.device.read(&ch::AR4_READ_SECONDS_SINCE_UPDATE).await?;
+        let raw = read_uuid!(self.device, AR4_READ_SECONDS_SINCE_UPDATE).await?;
 
         Ok(u16::from_le_bytes(raw.try_into().expect("expected total readings to be a 2-byte little endian integer")))
+    }
+
+    pub fn as_ref(&self) -> &P {
+        &self.device
     }
 }
 
@@ -388,8 +468,19 @@ pub struct DiscoveredAranet {
     pub current_reading: Option<CurrentReadingDetailed>,
 }
 
+impl DiscoveredAranet {
+    pub async fn upgrade(&self) -> btleplug::Result<Aranet4<btleplug::platform::Peripheral>> {
+        let periph = self.adapter.peripheral(&self.peripheral_id).await?;
+        if ! periph.is_connected().await? {
+            log::debug!("connecting to device during DiscoveredAranet::upgrade({:?})", self);
+            let () = periph.connect().await?;
+        }
+        Ok(Aranet4::new(periph).await?)
+    }
+}
+
 /// Attempt to locate an Aranet4 device, by finding a device that advertises manufacturer data with the correct ID
-pub async fn discover_aranet4(manager: &Manager) -> btleplug::Result<Pin<Box<impl Stream<Item = DiscoveredAranet>>>> {
+pub async fn discover_aranet4(manager: &Manager) -> btleplug::Result<Pin<Box<dyn Stream<Item = DiscoveredAranet>>>> {
     let adapters = manager.adapters().await?;
     log::debug!("Found {} BTLE adapters", adapters.len());
     let mut event_streams = Vec::with_capacity(adapters.len());

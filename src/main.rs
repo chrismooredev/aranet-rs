@@ -205,7 +205,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             #[cfg(feature = "nagiosplugin")]
             OutputFormat::Nagios => {
 
-                let mut desc = match first.current_reading {
+                let desc = match first.current_reading {
                     None => format!("Advertisement from {}, Firmware {} (Measurement not included)", first.peripheral_id, first.manufacturer_data.version),
                     Some(cr) => format!("Advertisement from {}, Firmware {} (Measurement age {}/{}s)", first.peripheral_id, first.manufacturer_data.version, cr.age, cr.interval),
                 };
